@@ -1,5 +1,7 @@
 # Wazuh Automated Installer — Server & Agent (`wazuh-install.sh`)
 
+🇺🇸 **English** | 🇧🇷 [Português (BR)](README-ptbr.md) | 🇪🇸 [Español](README-es.md)
+
 ![Wazuh Installer Cover](wazuh-installer-cover.webp)
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/sr00t3d/wazuh-installer)
@@ -127,5 +129,3 @@ sudo WAZUH_MODE=agent WAZUH_MANAGER_IP=10.0.0.10 WAZUH_AGENT_NAME=web-prod-01 WA
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
-
-Português: [README-ptbr.md](README-ptbr.md)
