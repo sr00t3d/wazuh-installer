@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Wazuh Installer — Automated Single-Node Server & Agent Setup Script
-# Author: Percio Castelo (sr00t3d)
-# Version: 1.2.0
-# Description: Automates the deployment of a Wazuh Single-Node Server via Docker,
-#              configures certificates, opens firewall ports, and installs
-#              and optimizes the Wazuh Agent for Debian/RHEL systems.
-# GitHub:  https://github.com/sr00t3d/wazuh-install
-# License: MIT
+#  wazuh-install.sh — Wazuh Single-Node Server (Docker) & Agent Installer
+# ==============================================================================
+#  Author  : Percio Castelo <percio@perciocastelo.com.br>
+#  Website : https://perciocastelo.com.br
+#  Repo    : https://github.com/sr00t3d/wazuh-installer
+#  License : Apache-2.0
+#  Version : 2.0.0
 # ==============================================================================
 
 set -eo pipefail
 
 # ─── Versioning ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="2.0.0"
 WAZUH_VERSION="${WAZUH_VERSION:-4.14.3}"
 LOG_FILE="/var/log/wazuh-install.log"
+
+# ─── CLI Output & Mode Flags ──────────────────────────────────────────────────
+OUTPUT_FORMAT="table"
+DRY_RUN=false
+PREFLIGHT_ONLY=false
+QUIET_MODE=false
+NO_COLOR_FLAG=false
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -25,6 +31,10 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+disable_colors() {
+    RED='' ; GREEN='' ; YELLOW='' ; BLUE='' ; CYAN='' ; BOLD='' ; NC=''
+}
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 _log_to_file() {
@@ -82,18 +92,24 @@ show_help() {
 
 ${BOLD}Wazuh Automated Installer v${SCRIPT_VERSION}${NC} — Wazuh ${WAZUH_VERSION}
 Author  : Percio Castelo (sr00t3d) — https://perciocastelo.com.br
-GitHub  : https://github.com/sr00t3d/wazuh-install
-License : MIT
+GitHub  : https://github.com/sr00t3d/wazuh-installer
+License : Apache-2.0
 
 ${BOLD}USAGE:${NC}
   sudo ./wazuh-install.sh [OPTIONS]
-  curl -sSL https://perciocastelo.com.br/assets/downloads/wazuh-install.sh | sudo bash -s -- [OPTIONS]
+  ./wazuh-install.sh --preflight [-o table|json|csv]
+  curl -sSL https://raw.githubusercontent.com/sr00t3d/wazuh-installer/main/wazuh-install.sh | sudo bash -s -- [OPTIONS]
 
 ${BOLD}OPTIONS:${NC}
-  --lang=pt|en      Force UI language (default: auto-detect from locale)
-  --unattended      Non-interactive mode — reads config from environment variables
-  --version         Show script and Wazuh target version, then exit
-  --help, -h        Show this help message and exit
+  --preflight, --status  Audit OS, RAM, disk, vm.max_map_count, Docker, ports & Wazuh state (no root required)
+  --dry-run              Preview unattended server/agent deployment plan without modifying the host
+  -o, --output <fmt>     Output format for --preflight / --dry-run: table (default), json, csv
+  --lang=pt|en           Force UI language (default: auto-detect from locale)
+  --unattended           Non-interactive mode — reads config from environment variables
+  -q, --quiet            Suppress banner header in structured modes
+  --no-color             Disable ANSI color codes
+  -V, --version          Show script and Wazuh target version, then exit
+  -h, --help             Show this help message and exit
 
 ${BOLD}UNATTENDED MODE — ENVIRONMENT VARIABLES:${NC}
   WAZUH_MODE          (Required) 'server' or 'agent'
@@ -133,18 +149,44 @@ EOF
 }
 
 # ─── Argument parsing ──────────────────────────────────────────────────────────
-for arg in "$@"; do
-    case "$arg" in
-        --lang=pt|--lang-pt)  LANG_PREF="pt" ;;
-        --lang=en|--lang-en)  LANG_PREF="en" ;;
-        --unattended)         UNATTENDED=true ;;
-        --version)
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lang=pt|--lang-pt)    LANG_PREF="pt"; shift ;;
+        --lang=en|--lang-en)    LANG_PREF="en"; shift ;;
+        --unattended)           UNATTENDED=true; shift ;;
+        --preflight|--status)   PREFLIGHT_ONLY=true; shift ;;
+        --dry-run)              DRY_RUN=true; shift ;;
+        -q|--quiet)             QUIET_MODE=true; shift ;;
+        --no-color)             NO_COLOR_FLAG=true; shift ;;
+        -o|--output)
+            OUTPUT_FORMAT="${2:-table}"
+            shift 2 ;;
+        --output=*)
+            OUTPUT_FORMAT="${1#*=}"
+            shift ;;
+        -V|--version)
             echo "wazuh-install.sh v${SCRIPT_VERSION} (Wazuh target: ${WAZUH_VERSION})"
             exit 0
             ;;
         --help|-h) show_help ;;
+        *)
+            echo "[ERROR] Unknown option: $1 (use -h for help)" >&2
+            exit 1
+            ;;
     esac
 done
+
+case "$OUTPUT_FORMAT" in
+    table|json|csv) ;;
+    *)
+        echo "[ERROR] Invalid output format: ${OUTPUT_FORMAT} (expected table, json, or csv)" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$NO_COLOR_FLAG" = true ] || [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ] || [ "$OUTPUT_FORMAT" != "table" ]; then
+    disable_colors
+fi
 
 # ─── Internationalization Dictionary ──────────────────────────────────────────
 if [ "$LANG_PREF" = "pt" ]; then
@@ -485,16 +527,16 @@ else
     MSG_LOG_FILE_HINT="Full log available at: %s"
 fi
 
-# ─── Root check ───────────────────────────────────────────────────────────────
-if [ "$EUID" -ne 0 ]; then
-    log_error "$MSG_ERR_ROOT"
-    exit 1
+# ─── Root check & Log file initialization (skipped for read-only --preflight / --dry-run) ──
+if [ "$PREFLIGHT_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
+    if [ "$EUID" -ne 0 ]; then
+        log_error "$MSG_ERR_ROOT"
+        exit 1
+    fi
+    touch "$LOG_FILE" 2>/dev/null || true
+    log_info "$MSG_LOG_INIT" "$LOG_FILE"
+    log_info "wazuh-install.sh v${SCRIPT_VERSION} | Wazuh ${WAZUH_VERSION} | lang=${LANG_PREF} | unattended=${UNATTENDED}"
 fi
-
-# ─── Log file initialization ──────────────────────────────────────────────────
-touch "$LOG_FILE" 2>/dev/null || true
-log_info "$MSG_LOG_INIT" "$LOG_FILE"
-log_info "wazuh-install.sh v${SCRIPT_VERSION} | Wazuh ${WAZUH_VERSION} | lang=${LANG_PREF} | unattended=${UNATTENDED}"
 
 # ─── ERR trap ─────────────────────────────────────────────────────────────────
 _on_error() {
@@ -1399,6 +1441,174 @@ show_menu() {
     esac
 }
 
+# ─── Structured Preflight / Status & Dry-Run Engine (v2.0.0) ─────────────────
+_json_esc() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/}"
+    printf '%s' "$s"
+}
+
+run_structured_preflight() {
+    local ts_utc os_pretty="unknown" arch ram_mb disk_gb vm_map="0"
+    local docker_state="not-installed" compose_state="not-installed"
+    local agent_state="not-installed" server_dir="absent" busy_ports=""
+    local server_ready="yes"
+
+    ts_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    arch="$(uname -m 2>/dev/null || printf 'unknown')"
+    if [ -r /etc/os-release ]; then
+        os_pretty="$(awk -F= '/^PRETTY_NAME=/ {gsub(/^"|"$/, "", $2); print $2; exit}' /etc/os-release 2>/dev/null || printf 'linux')"
+    fi
+    ram_mb="$(awk '/MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || printf '0')"
+    disk_gb="$(df -BG / 2>/dev/null | awk 'NR==2 {gsub(/G/, "", $4); print $4}' || printf '0')"
+    vm_map="$(cat /proc/sys/vm/max_map_count 2>/dev/null || printf '0')"
+
+    if command -v docker >/dev/null 2>&1; then
+        docker_state="$(docker --version 2>/dev/null | awk '{gsub(/,/, "", $3); print $3}' || printf 'installed')"
+        if docker compose version >/dev/null 2>&1; then
+            compose_state="$(docker compose version --short 2>/dev/null || printf 'installed')"
+        fi
+    fi
+
+    if systemctl list-unit-files 2>/dev/null | grep -q '^wazuh-agent\.service'; then
+        agent_state="$(systemctl is-active wazuh-agent 2>/dev/null || printf 'inactive')"
+    fi
+    [ -d /opt/docker/wazuh ] && server_dir="present"
+
+    local p
+    for p in 1514 1515 514 55000 4443; do
+        if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":${p}[[:space:]]"; then
+            busy_ports="${busy_ports:+${busy_ports},}${p}"
+        fi
+    done
+
+    if [ "${ram_mb:-0}" -lt 3200 ] || [ "${disk_gb:-0}" -lt 10 ]; then
+        server_ready="warn"
+    fi
+
+    case "$OUTPUT_FORMAT" in
+        json)
+            cat <<EOF
+{
+  "tool": "wazuh-install.sh",
+  "version": "${SCRIPT_VERSION}",
+  "wazuh_target": "${WAZUH_VERSION}",
+  "timestamp": "$(_json_esc "$ts_utc")",
+  "os": "$(_json_esc "$os_pretty")",
+  "arch": "$(_json_esc "$arch")",
+  "ram_mb": ${ram_mb:-0},
+  "disk_free_gb": ${disk_gb:-0},
+  "vm_max_map_count": ${vm_map:-0},
+  "docker": "$(_json_esc "$docker_state")",
+  "docker_compose": "$(_json_esc "$compose_state")",
+  "wazuh_server_dir": "$(_json_esc "$server_dir")",
+  "wazuh_agent": "$(_json_esc "$agent_state")",
+  "ports_in_use": "$(_json_esc "${busy_ports:-none}")",
+  "server_readiness": "$(_json_esc "$server_ready")"
+}
+EOF
+            ;;
+        csv)
+            printf 'os,arch,ram_mb,disk_free_gb,vm_max_map_count,docker,docker_compose,wazuh_server_dir,wazuh_agent,ports_in_use,server_readiness\n'
+            printf '"%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s"\n' \
+                "$os_pretty" "$arch" "$ram_mb" "$disk_gb" "$vm_map" \
+                "$docker_state" "$compose_state" "$server_dir" "$agent_state" "${busy_ports:-none}" "$server_ready"
+            ;;
+        table)
+            if [ "$QUIET_MODE" = false ]; then
+                printf '%s=====================================================================%s\n' "$CYAN" "$NC"
+                printf ' %swazuh-install.sh v%s%s | Preflight & Readiness Audit | %s\n' "$BOLD" "$SCRIPT_VERSION" "$NC" "$ts_utc"
+                printf '%s=====================================================================%s\n' "$CYAN" "$NC"
+            fi
+            printf '  Wazuh Target     : %s\n' "$WAZUH_VERSION"
+            printf '  OS / Arch        : %s (%s)\n' "$os_pretty" "$arch"
+            printf '  RAM / Disk Free  : %s MB / %s GB (server readiness: %s)\n' "$ram_mb" "$disk_gb" "$server_ready"
+            printf '  vm.max_map_count : %s (required >= 262144 for Indexer)\n' "$vm_map"
+            printf '  Docker / Compose : %s / %s\n' "$docker_state" "$compose_state"
+            printf '  Wazuh Server Dir : %s (/opt/docker/wazuh)\n' "$server_dir"
+            printf '  Wazuh Agent      : %s\n' "$agent_state"
+            printf '  Target Ports Busy: %s (checked: 1514,1515,514,55000,4443)\n' "${busy_ports:-none}"
+            ;;
+    esac
+}
+
+run_dry_run_plan() {
+    local mode="${WAZUH_MODE:-server}"
+    local ts_utc
+    ts_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    case "$mode" in
+        server)
+            if [ "$OUTPUT_FORMAT" = "json" ]; then
+                cat <<EOF
+{
+  "tool": "wazuh-install.sh",
+  "version": "${SCRIPT_VERSION}",
+  "dry_run": true,
+  "mode": "server",
+  "wazuh_version": "${WAZUH_VERSION}",
+  "timestamp": "$(_json_esc "$ts_utc")",
+  "deploy_dir": "/opt/docker/wazuh",
+  "dashboard_port": 4443,
+  "firewall_ports": ["1514/tcp", "1515/tcp", "514/udp", "55000/tcp", "4443/tcp"],
+  "sysctl": "vm.max_map_count=262144",
+  "admin_password_source": "$([ -n "$WAZUH_ADMIN_PASS" ] && echo "env" || echo "auto-generated")"
+}
+EOF
+            else
+                printf '[DRY-RUN] Mode           : Wazuh Single-Node Server (Docker)\n'
+                printf '[DRY-RUN] Wazuh Version  : %s\n' "$WAZUH_VERSION"
+                printf '[DRY-RUN] Deploy Dir     : /opt/docker/wazuh (Dashboard HTTPS :4443)\n'
+                printf '[DRY-RUN] Kernel Tuning  : vm.max_map_count=262144\n'
+                printf '[DRY-RUN] Firewall Ports : 1514/tcp, 1515/tcp, 514/udp, 55000/tcp, 4443/tcp\n'
+                printf '[DRY-RUN] Admin Password : %s\n' "$([ -n "$WAZUH_ADMIN_PASS" ] && echo "custom (from WAZUH_ADMIN_PASS)" || echo "auto-generated (20 chars)")"
+            fi
+            ;;
+        agent)
+            local mgr="${WAZUH_MANAGER_IP:-<required: WAZUH_MANAGER_IP>}"
+            local aname="${WAZUH_AGENT_NAME:-$(hostname)}"
+            if [ "$OUTPUT_FORMAT" = "json" ]; then
+                cat <<EOF
+{
+  "tool": "wazuh-install.sh",
+  "version": "${SCRIPT_VERSION}",
+  "dry_run": true,
+  "mode": "agent",
+  "wazuh_version": "${WAZUH_VERSION}",
+  "timestamp": "$(_json_esc "$ts_utc")",
+  "manager_ip": "$(_json_esc "$mgr")",
+  "agent_name": "$(_json_esc "$aname")",
+  "agent_group": "$(_json_esc "$WAZUH_AGENT_GROUP")",
+  "memory_opt": "$(_json_esc "$WAZUH_MEM_OPT")"
+}
+EOF
+            else
+                printf '[DRY-RUN] Mode         : Wazuh Agent\n'
+                printf '[DRY-RUN] Wazuh Version: %s\n' "$WAZUH_VERSION"
+                printf '[DRY-RUN] Manager IP   : %s\n' "$mgr"
+                printf '[DRY-RUN] Agent Name   : %s (group: %s)\n' "$aname" "$WAZUH_AGENT_GROUP"
+                printf '[DRY-RUN] Memory Opt   : %s (1=swap, 2=zram, 3=none)\n' "$WAZUH_MEM_OPT"
+            fi
+            ;;
+        *)
+            echo "[ERROR] Invalid WAZUH_MODE for --dry-run: ${mode} (expected server or agent)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
+if [ "$PREFLIGHT_ONLY" = true ]; then
+    run_structured_preflight
+    exit 0
+fi
+
+if [ "$DRY_RUN" = true ]; then
+    run_dry_run_plan
+    exit 0
+fi
+
 preflight_check
 show_menu

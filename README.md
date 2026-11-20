@@ -1,175 +1,131 @@
-# Wazuh Automated Installer — Server & Agent
+# Wazuh Automated Installer — Server & Agent (`wazuh-install.sh`)
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/sr00t3d/wazuh-installer)
+![Wazuh Installer Cover](wazuh-installer-cover.webp)
+
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/sr00t3d/wazuh-installer)
 [![Wazuh](https://img.shields.io/badge/Wazuh-4.14.3-00b4d8.svg)](https://wazuh.com)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![OS](https://img.shields.io/badge/OS-Debian%20%7C%20RHEL-orange.svg)](https://github.com/sr00t3d/wazuh-installer)
 [![Arch](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64-purple.svg)](https://github.com/sr00t3d/wazuh-installer)
 
-Script Shell interativo e robusto para automatizar a instalação, configuração, otimização e gerenciamento do **Wazuh** (servidor Single-Node via Docker e agente Wazuh) em distribuições Linux populares.
+Interactive and unattended Bash CLI to audit readiness, install, optimize, and manage a **Wazuh Single-Node Server (Docker)** and **Wazuh Agent** on Debian/Ubuntu and RHEL/AlmaLinux/Rocky Linux distributions.
 
-Desenvolvido por **[Percio Castelo (sr00t3d)](https://perciocastelo.com.br)**.
+## Key Features
 
----
+- **Read-Only Preflight & Readiness Audit (`--preflight` / `--status`):** inspects OS/architecture, RAM, free disk space, `vm.max_map_count`, Docker Engine & Compose plugin, Wazuh server/agent status, and target ports (`1514`, `1515`, `514`, `55000`, `4443`) in `table`, `json`, or `csv` — no root required.
+- **Unattended & Dry-Run Mode (`--unattended`, `--dry-run`):** preview or execute automated server/agent deployments in CI/CD, Ansible, or cloud-init via `WAZUH_*` environment variables.
+- **Wazuh Single-Node Server (Docker):** installs Docker Engine + Compose, persists `vm.max_map_count=262144`, generates official TLS certificates, sets a strong BCrypt-hashed `admin` password (custom or auto-generated 20-char), exposes Dashboard HTTPS on port `4443`, and opens firewall ports (`UFW`, `firewalld`, or `iptables`).
+- **Wazuh Agent:** detects distro/arch (`x86_64` / `aarch64`), installs official `.deb` / `.rpm` packages, configures Manager IP, agent name/group, optional 2GB Swap or ZRAM memory optimization, and outbound firewall rules.
+- **Health Check, Uninstaller & Bilingual i18n:** interactive health checks, clean removal of server/agent components, automatic PT-BR / EN language detection (`--lang=pt|en`), and timestamped logging to `/var/log/wazuh-install.log`.
 
-## 🚀 Execução Rápida
-
-```bash
-# Interativo (menu completo):
-curl -sSL https://raw.githubusercontent.com/sr00t3d/wazuh-installer/refs/heads/main/wazuh-install.sh | sudo bash
-
-# Modo não-interativo — Servidor:
-sudo WAZUH_MODE=server WAZUH_ADMIN_PASS='MinhaS3nha!' ./wazuh-install.sh --unattended
-
-# Modo não-interativo — Agente:
-sudo WAZUH_MODE=agent WAZUH_MANAGER_IP=10.0.0.10 WAZUH_AGENT_NAME=webserver01 ./wazuh-install.sh --unattended
-
-# Ver ajuda completa:
-sudo ./wazuh-install.sh --help
-
-# Ver versão:
-sudo ./wazuh-install.sh --version
-```
-
----
-
-## 📋 Funcionalidades
-
-### 🖥️ 1. Servidor Wazuh (Single-Node)
-* **Instalação do Docker e Docker Compose**: Instala automaticamente o Docker Engine e o plugin Compose caso não estejam presentes.
-* **Tuning de Kernel**: Habilita persistentemente `vm.max_map_count=262144` exigido pelo Wazuh Indexer.
-* **Geração Automática de Certificados**: Executa o gerador oficial TLS do Wazuh via Docker.
-* **Senha Segura Customizada**:
-  * Solicita uma senha personalizada para o usuário `admin` antes do deploy.
-  * Gera senha aleatória forte (20 chars) automaticamente se o campo for deixado vazio.
-  * Gera o hash BCrypt correspondente usando o container `wazuh-indexer` e atualiza `internal_users.yml` e `docker-compose.yml`.
-* **Redirecionamento de Portas**: Dashboard rodando na porta HTTPS `4443` para evitar conflito com servidores web na `443`.
-* **Liberação de Firewall**: Abre as portas de entrada (`1514/tcp`, `1515/tcp`, `514/udp`, `55000/tcp`, `4443/tcp`) em UFW, firewalld ou iptables.
-
-### 📦 2. Agente Wazuh
-* **Registro Interativo**: IP/Domínio do Manager, nome customizado (padrão: hostname) e grupo (padrão: default).
-* **Otimização de Memória (Swap / ZRAM)**:
-  * Detecta configurações existentes para evitar duplicações.
-  * Cria Swap de 2GB ou configura ZRAM para evitar OOM em instâncias com < 2GB RAM.
-  * Habilita temporariamente `vm.overcommit_memory=1` durante instalação.
-* **Instalação Automática**: Baixa pacote `.deb` ou `.rpm` oficial para a arquitetura e SO detectados.
-* **Liberação de Firewall (Saída)**: Configura regras de saída apontadas para o IP do Servidor.
-
-### 🔍 3. Verificação de Saúde (Health Check)
-* Analisa containers Docker do servidor e testa conectividade HTTP na porta `4443`.
-* Verifica status do serviço `wazuh-agent`, exibe Manager configurado e logs recentes do `ossec.log`.
-
-### 🗑️ 4. Desinstalador Completo
-* **Servidor**: Para containers e volumes, limpa `/opt/docker/wazuh` e revoga regras de firewall.
-* **Agente**: Para serviço, desinstala pacote, limpa `/var/ossec` e oferece remoção do swapfile.
-
-### 🌐 5. Internacionalização (i18n)
-* **Detecção Automática**: Detecta a localidade do sistema e renderiza em **Português** ou **Inglês**.
-* **Flags manuais**: `--lang=pt` ou `--lang=en` para forçar o idioma.
-
-### ⚙️ 6. Modo Não-Interativo (Unattended)
-* Flag `--unattended` + variáveis de ambiente para uso em CI/CD, Ansible, cloud-init.
-* Ver seção completa de variáveis abaixo.
-
-### 🛡️ 7. Verificações de Pré-Instalação
-* Verifica espaço em disco disponível (mínimo 500MB, alerta abaixo de 10GB).
-* Detecta portas já em uso que possam causar conflitos.
-
-### 📄 8. Log Completo
-* Todo o output é salvo em `/var/log/wazuh-install.log` com timestamps.
-
----
-
-## 🛠️ Requisitos de Sistema
-
-| Requisito | Detalhes |
-|-----------|----------|
-| **OS Suportados** | Família Debian (Ubuntu, Debian, Mint...) e Família RHEL (RHEL, CentOS, OL, Rocky, AlmaLinux) |
-| **Arquiteturas** | `x86_64` (AMD64) e `aarch64` (ARM64) |
-| **Servidor RAM** | Mínimo recomendado: **4GB** (alerta abaixo de 3.2GB) |
-| **Agente RAM** | A partir de **1GB** com Swap/ZRAM habilitado |
-| **Disco** | Mínimo 500MB; recomendado 20GB para o servidor |
-| **Permissões** | Execução como `root` ou `sudo` |
-
----
-
-## 💾 Como Executar
-
-### Modo Interativo
+## Quick Start
 
 ```bash
-# Opção A: Download e execução
-curl -O https://raw.githubusercontent.com/sr00t3d/wazuh-installer/refs/heads/main/wazuh-install.sh
+git clone https://github.com/sr00t3d/wazuh-installer.git
+cd wazuh-installer
 chmod +x wazuh-install.sh
+
+# Audit host readiness without root (table, json, or csv)
+./wazuh-install.sh --preflight
+./wazuh-install.sh --preflight -o json
+
+# Interactive menu (server, agent, health check, uninstall)
 sudo ./wazuh-install.sh
 
-# Opção B: Execução direta por URL
-curl -sSL https://raw.githubusercontent.com/sr00t3d/wazuh-installer/refs/heads/main/wazuh-install.sh | sudo bash
-```
+# Preview unattended server deployment (--dry-run)
+WAZUH_MODE=server ./wazuh-install.sh --unattended --dry-run
 
-### Forçar Idioma Específico
-
-```bash
-# Inglês via URL
-curl -sSL https://raw.githubusercontent.com/sr00t3d/wazuh-installer/refs/heads/main/wazuh-install.sh | sudo bash -s -- --lang=en
-
-# Português local
-sudo ./wazuh-install.sh --lang=pt
-```
-
-### Modo Não-Interativo (Unattended)
-
-```bash
-# Servidor com senha customizada
+# Unattended server deployment (auto-generated or custom password)
 sudo WAZUH_MODE=server WAZUH_ADMIN_PASS='Str0ngP@ss!' ./wazuh-install.sh --unattended
 
-# Servidor com senha auto-gerada
-sudo WAZUH_MODE=server ./wazuh-install.sh --unattended
-
-# Servidor em host com pouca RAM (pula checagem)
-sudo WAZUH_MODE=server WAZUH_FORCE_RAM=true ./wazuh-install.sh --unattended
-
-# Agente simples
-sudo WAZUH_MODE=agent WAZUH_MANAGER_IP=192.168.1.10 ./wazuh-install.sh --unattended
-
-# Agente com swap e nome customizado
-sudo WAZUH_MODE=agent \
-  WAZUH_MANAGER_IP=10.0.0.1 \
-  WAZUH_AGENT_NAME=prod-webserver-01 \
-  WAZUH_AGENT_GROUP=webservers \
-  WAZUH_MEM_OPT=1 \
-  ./wazuh-install.sh --unattended
-
-# Via curl (ex: cloud-init)
-curl -sSL https://raw.githubusercontent.com/sr00t3d/wazuh-installer/refs/heads/main/wazuh-install.sh | \
-  sudo WAZUH_MODE=agent WAZUH_MANAGER_IP=10.0.0.1 bash -s -- --unattended
+# Unattended agent deployment with 2GB swap
+sudo WAZUH_MODE=agent WAZUH_MANAGER_IP=10.0.0.10 WAZUH_AGENT_NAME=web-prod-01 WAZUH_AGENT_GROUP=webservers WAZUH_MEM_OPT=1 ./wazuh-install.sh --unattended
 ```
 
-### Variáveis de Ambiente (Modo Unattended)
+## CLI Options & Environment Variables
 
-| Variável | Valores | Descrição |
-|----------|---------|-----------|
-| `WAZUH_MODE` | `server` \| `agent` | **Obrigatório.** Define o que instalar. |
-| `WAZUH_VERSION` | string | Versão alvo do Wazuh (padrão: `4.14.3`) |
-| `WAZUH_ADMIN_PASS` | string | [Servidor] Senha admin (mín. 8 chars). Vazio = auto-gerada. |
-| `WAZUH_FORCE_RAM` | `true` \| `false` | [Servidor] Pula checagem de RAM baixa. |
-| `WAZUH_MANAGER_IP` | IP/domínio | [Agente] **Obrigatório.** IP do Manager. |
-| `WAZUH_AGENT_NAME` | string | [Agente] Nome do agente (padrão: hostname). |
-| `WAZUH_AGENT_GROUP` | string | [Agente] Grupo do agente (padrão: `default`). |
-| `WAZUH_MEM_OPT` | `1` \| `2` \| `3` | [Agente] `1`=swap, `2`=zram, `3`=nenhum (padrão: `3`). |
+| Option | Description |
+|---|---|
+| `--preflight`, `--status` | Audit OS, RAM, disk, `vm.max_map_count`, Docker, ports, and Wazuh state (no root required) |
+| `--dry-run` | Preview unattended server/agent deployment plan without modifying the host |
+| `-o`, `--output <fmt>` | Output format for `--preflight` / `--dry-run`: `table` (default), `json`, `csv` |
+| `--unattended` | Non-interactive deployment driven by `WAZUH_*` environment variables |
+| `--lang=pt\|en` | Force UI language (auto-detected from locale by default) |
+| `-q`, `--quiet` | Suppress banner header in structured modes |
+| `--no-color` | Disable ANSI colors |
+| `-V`, `--version` | Show script and Wazuh target version |
+| `-h`, `--help` | Show help and exit |
 
----
+| Variable | Values | Description |
+|---|---|---|
+| `WAZUH_MODE` | `server` \| `agent` | Target deployment role (required for `--unattended`) |
+| `WAZUH_VERSION` | string | Target Wazuh version (default: `4.14.3`) |
+| `WAZUH_ADMIN_PASS` | string | Server admin password (min 8 chars; empty = auto-generated) |
+| `WAZUH_FORCE_RAM` | `true` \| `false` | Skip low-RAM safety check on server install |
+| `WAZUH_MANAGER_IP` | IP / FQDN | Wazuh Manager address (required for agent) |
+| `WAZUH_AGENT_NAME` | string | Custom agent name (default: hostname) |
+| `WAZUH_AGENT_GROUP` | string | Agent group (default: `default`) |
+| `WAZUH_MEM_OPT` | `1` \| `2` \| `3` | Agent memory optimization: `1`=swap, `2`=zram, `3`=none |
 
-## 📂 Log de Instalação
+## Real Output Example
 
-Todos os outputs são automaticamente salvos com timestamp em:
+### Host Preflight Audit (`./wazuh-install.sh --preflight --no-color`)
 
+```text
+=====================================================================
+ wazuh-install.sh v2.0.0 | Preflight & Readiness Audit | 2026-11-20T22:57:32Z
+=====================================================================
+  Wazuh Target     : 4.14.3
+  OS / Arch        : AlmaLinux 8.10 (Cerulean Leopard) (x86_64)
+  RAM / Disk Free  : 11688 MB / 20 GB (server readiness: yes)
+  vm.max_map_count : 262144 (required >= 262144 for Indexer)
+  Docker / Compose : not-installed / not-installed
+  Wazuh Server Dir : absent (/opt/docker/wazuh)
+  Wazuh Agent      : not-installed
+  Target Ports Busy: none (checked: 1514,1515,514,55000,4443)
 ```
-/var/log/wazuh-install.log
+
+### Structured JSON Preflight (`./wazuh-install.sh --preflight -o json`)
+
+```json
+{
+  "tool": "wazuh-install.sh",
+  "version": "2.0.0",
+  "wazuh_target": "4.14.3",
+  "timestamp": "2026-11-20T22:57:33Z",
+  "os": "AlmaLinux 8.10 (Cerulean Leopard)",
+  "arch": "x86_64",
+  "ram_mb": 11688,
+  "disk_free_gb": 20,
+  "vm_max_map_count": 262144,
+  "docker": "not-installed",
+  "docker_compose": "not-installed",
+  "wazuh_server_dir": "absent",
+  "wazuh_agent": "not-installed",
+  "ports_in_use": "none",
+  "server_readiness": "yes"
+}
 ```
 
----
+### Unattended Agent Dry-Run (`WAZUH_MODE=agent ... ./wazuh-install.sh --unattended --dry-run -o json`)
 
-## 🛡️ Licença
+```json
+{
+  "tool": "wazuh-install.sh",
+  "version": "2.0.0",
+  "dry_run": true,
+  "mode": "agent",
+  "wazuh_version": "4.14.3",
+  "timestamp": "2026-11-20T22:57:34Z",
+  "manager_ip": "10.0.0.10",
+  "agent_name": "web-prod-01",
+  "agent_group": "webservers",
+  "memory_opt": "1"
+}
+```
 
-Este projeto é distribuído sob a licença **MIT**. Consulte o cabeçalho do script para mais detalhes.
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+Português: [README-ptbr.md](README-ptbr.md)
