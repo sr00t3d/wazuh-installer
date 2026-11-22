@@ -533,7 +533,8 @@ if [ "$PREFLIGHT_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
         log_error "$MSG_ERR_ROOT"
         exit 1
     fi
-    touch "$LOG_FILE" 2>/dev/null || true
+    (umask 077; touch "$LOG_FILE" 2>/dev/null || true)
+    chmod 600 "$LOG_FILE" 2>/dev/null || true
     log_info "$MSG_LOG_INIT" "$LOG_FILE"
     log_info "wazuh-install.sh v${SCRIPT_VERSION} | Wazuh ${WAZUH_VERSION} | lang=${LANG_PREF} | unattended=${UNATTENDED}"
 fi
@@ -842,14 +843,14 @@ install_server_flow() {
                 printf "%s" "$MSG_RAM_FORCE_PROMPT"
                 read force_install < /dev/tty
                 force_install=${force_install:-n}
-                if [[ ! "$force_install" =~ ^[Ss]$ ]]; then
+                if [[ ! "$force_install" =~ ^[YySs]$ ]]; then
                     log_error "$MSG_SERVER_ABORT_RAM"
                     exit 1
                 fi
                 printf "%s" "$MSG_RAM_DOUBLE_CONFIRM"
                 read double_confirm < /dev/tty
                 double_confirm=${double_confirm:-n}
-                if [[ ! "$double_confirm" =~ ^[Ss]$ ]]; then
+                if [[ ! "$double_confirm" =~ ^[YySs]$ ]]; then
                     log_error "$MSG_SERVER_ABORT_DOUBLE"
                     exit 1
                 fi
@@ -900,7 +901,7 @@ install_server_flow() {
             printf "%s" "$MSG_SERVER_CLEAN_PROMPT"
             read clean_repo < /dev/tty
             clean_repo=${clean_repo:-n}
-            if [[ "$clean_repo" =~ ^[Ss]$ ]]; then
+            if [[ "$clean_repo" =~ ^[YySs]$ ]]; then
                 if [ -f "wazuh-docker/single-node/docker-compose.yml" ]; then
                     log_info "$MSG_SERVER_STOPPING_EXISTING"
                     (cd wazuh-docker/single-node && docker compose down || true)
@@ -935,7 +936,11 @@ install_server_flow() {
             log_info "$MSG_HASH_START"
         else
             log_info "$MSG_UNATTENDED_PASS_GEN"
-            admin_pass=$(head /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 20 || true)
+            if command -v openssl >/dev/null 2>&1; then
+                admin_pass=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20)
+            else
+                admin_pass=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+            fi
             log_success "$MSG_SEC_PASS_GEN" "$admin_pass"
         fi
     else
@@ -945,7 +950,11 @@ install_server_flow() {
             read -s admin_pass < /dev/tty
             echo ""
             if [ -z "$admin_pass" ]; then
-                admin_pass=$(head /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16 || true)
+                if command -v openssl >/dev/null 2>&1; then
+                    admin_pass=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20)
+                else
+                    admin_pass=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+                fi
                 log_info "$MSG_SEC_PASS_GEN" "$admin_pass"
                 break
             elif [ ${#admin_pass} -lt 8 ]; then
@@ -981,14 +990,22 @@ if hash_val and pass_val:
     if os.path.exists(users_path):
         with open(users_path, "r") as f:
             content = f.read()
-        new_content = re.sub(r"(admin:\s*\n\s*hash:\s*\")[^\"]+(\")", r"\g<1>" + hash_val + r"\g<2>", content)
+        new_content = re.sub(
+            r"(admin:\s*\n\s*hash:\s*\")[^\"]+(\")",
+            lambda m: m.group(1) + hash_val + m.group(2),
+            content,
+        )
         with open(users_path, "w") as f:
             f.write(new_content)
     compose_path = "docker-compose.yml"
     if os.path.exists(compose_path):
         with open(compose_path, "r") as f:
             content = f.read()
-        new_content = content.replace("INDEXER_PASSWORD=SecretPassword", f"INDEXER_PASSWORD={pass_val}")
+        new_content = re.sub(
+            r"(INDEXER_PASSWORD=)[^\s\"\x27]+",
+            lambda m: m.group(1) + pass_val,
+            content,
+        )
         with open(compose_path, "w") as f:
             f.write(new_content)
 '
@@ -997,8 +1014,8 @@ if hash_val and pass_val:
         escaped_hash=$(echo "$hash_val" | sed -e 's/\\/\\\\/g' -e 's/\//\\\//g' -e 's/&/\\&/g')
         local escaped_pass
         escaped_pass=$(echo "$admin_pass" | sed -e 's/\\/\\\\/g' -e 's/\//\\\//g' -e 's/&/\\&/g')
-        sed -i "s|hash: \"\$2y\$12\$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO\"|hash: \"$escaped_hash\"|g" config/wazuh_indexer/internal_users.yml
-        sed -i "s|INDEXER_PASSWORD=SecretPassword|INDEXER_PASSWORD=$escaped_pass|g" docker-compose.yml
+        sed -i "/^admin:/,/^  reserved:/ s|hash: \"[^\"]*\"|hash: \"$escaped_hash\"|" config/wazuh_indexer/internal_users.yml
+        sed -i "s|INDEXER_PASSWORD=[^[:space:]\"']*|INDEXER_PASSWORD=$escaped_pass|g" docker-compose.yml
     fi
     log_success "$MSG_CFG_WRITE_OK"
 
@@ -1008,14 +1025,10 @@ if hash_val and pass_val:
     docker compose -f generate-indexer-certs.yml run --rm generator
     log_success "$MSG_CERTS_OK"
 
-    # Port remapping
+    # Port remapping (idempotent: never corrupts 4443:5601 into 44443:5601)
     log_info "$MSG_PORT_CHANGE_START"
-    if grep -q "443:5601" docker-compose.yml; then
-        sed -i 's/443:5601/4443:5601/g' docker-compose.yml
-    elif grep -q '"443:5601"' docker-compose.yml; then
-        sed -i 's/"443:5601"/"4443:5601"/g' docker-compose.yml
-    else
-        sed -i 's/443/4443/g' docker-compose.yml
+    if ! grep -qE '(^|[[:space:]"-])4443:5601' docker-compose.yml; then
+        sed -i -E 's/([[:space:]"-])443:5601/\14443:5601/g' docker-compose.yml
     fi
     log_success "$MSG_PORT_CHANGE_OK"
 
@@ -1144,7 +1157,7 @@ install_agent_flow() {
         fi
 
         log_info "$MSG_AGENT_DEB_DOWN" "$deb_url"
-        curl -L -o /tmp/wazuh-agent.deb "$deb_url"
+        curl -fsSL -o /tmp/wazuh-agent.deb "$deb_url"
 
         log_info "$MSG_AGENT_INSTALL_START"
         WAZUH_MANAGER="$manager_ip" WAZUH_AGENT_GROUP="$agent_group" WAZUH_AGENT_NAME="$agent_name" dpkg -i /tmp/wazuh-agent.deb
@@ -1164,7 +1177,7 @@ install_agent_flow() {
         fi
 
         log_info "$MSG_AGENT_RPM_DOWN" "$rpm_url"
-        curl -L -o /tmp/wazuh-agent.rpm "$rpm_url"
+        curl -fsSL -o /tmp/wazuh-agent.rpm "$rpm_url"
 
         log_info "$MSG_AGENT_INSTALL_START"
         WAZUH_MANAGER="$manager_ip" WAZUH_AGENT_GROUP="$agent_group" WAZUH_AGENT_NAME="$agent_name" rpm -ihv /tmp/wazuh-agent.rpm --force
@@ -1179,7 +1192,7 @@ install_agent_flow() {
     if [ -f /var/ossec/etc/ossec.conf ]; then
         if ! grep -q "<address>$manager_ip</address>" /var/ossec/etc/ossec.conf; then
             log_info "$MSG_AGENT_OSSEC_CONF_CFG"
-            sed -i "s/<address>MANAGER_IP<\/address>/<address>$manager_ip<\/address>/g" /var/ossec/etc/ossec.conf
+            sed -i -E "s|<address>[^<]+</address>|<address>${manager_ip}</address>|" /var/ossec/etc/ossec.conf
         fi
     fi
 
@@ -1272,7 +1285,7 @@ uninstall_server() {
     printf "%s" "$MSG_UN_CONFIRM_PROMPT"
     read confirm_un < /dev/tty
     confirm_un=${confirm_un:-n}
-    if [[ ! "$confirm_un" =~ ^[Yy]$ ]]; then
+    if [[ ! "$confirm_un" =~ ^[YySs]$ ]]; then
         log_info "$MSG_UN_CANCELLED"
         return
     fi
@@ -1312,7 +1325,7 @@ uninstall_agent() {
     printf "%s" "$MSG_UN_AGENT_CONFIRM_PROMPT"
     read confirm_un < /dev/tty
     confirm_un=${confirm_un:-n}
-    if [[ ! "$confirm_un" =~ ^[Yy]$ ]]; then
+    if [[ ! "$confirm_un" =~ ^[YySs]$ ]]; then
         log_info "$MSG_UN_CANCELLED"
         return
     fi
@@ -1474,7 +1487,8 @@ run_structured_preflight() {
     fi
 
     if systemctl list-unit-files 2>/dev/null | grep -q '^wazuh-agent\.service'; then
-        agent_state="$(systemctl is-active wazuh-agent 2>/dev/null || printf 'inactive')"
+        agent_state="$(systemctl is-active wazuh-agent 2>/dev/null || true)"
+        agent_state="${agent_state:-inactive}"
     fi
     [ -d /opt/docker/wazuh ] && server_dir="present"
 
