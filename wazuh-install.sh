@@ -6,13 +6,13 @@
 #  Website : https://perciocastelo.com.br
 #  Repo    : https://github.com/sr00t3d/wazuh-installer
 #  License : Apache-2.0
-#  Version : 2.0.0
+#  Version : 2.0.1
 # ==============================================================================
 
 set -eo pipefail
 
 # ─── Versioning ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.0.1"
 WAZUH_VERSION="${WAZUH_VERSION:-4.14.3}"
 LOG_FILE="/var/log/wazuh-install.log"
 
@@ -351,7 +351,7 @@ if [ "$LANG_PREF" = "pt" ]; then
     MSG_UNATTENDED_MEM_OPT="Opção de memória aplicada automaticamente (WAZUH_MEM_OPT=%s)."
     MSG_PREFLIGHT_START="Executando verificações de pré-instalação (pre-flight checks)..."
     MSG_PREFLIGHT_DISK_OK="Espaço em disco disponível: %sMB — OK."
-    MSG_PREFLIGHT_DISK_WARN="Pouco espaço em disco: %sMB disponível. Mínimo recomendado: 10240MB para o servidor."
+    MSG_PREFLIGHT_DISK_WARN="Pouco espaço em disco: %sMB disponível. Mínimo recomendado: 20480MB (20GB) para o servidor Wazuh (feeds do Vulnerability Detector consomem ~16GB)."
     MSG_PREFLIGHT_DISK_FAIL="Espaço em disco insuficiente: apenas %sMB disponível. Mínimo absoluto: 500MB."
     MSG_PREFLIGHT_PORT_BUSY="As seguintes portas já estão em uso neste sistema (pode causar conflitos):%s"
     MSG_PREFLIGHT_OK="Pré-verificações concluídas com sucesso."
@@ -519,7 +519,7 @@ else
     MSG_UNATTENDED_MEM_OPT="Memory option applied automatically (WAZUH_MEM_OPT=%s)."
     MSG_PREFLIGHT_START="Running pre-flight checks..."
     MSG_PREFLIGHT_DISK_OK="Available disk space: %sMB — OK."
-    MSG_PREFLIGHT_DISK_WARN="Low disk space: %sMB available. Minimum 10240MB recommended for the server."
+    MSG_PREFLIGHT_DISK_WARN="Low disk space: %sMB available. Minimum 20480MB (20GB) recommended for Wazuh Server (Vulnerability Detector feed sync downloads ~16GB)."
     MSG_PREFLIGHT_DISK_FAIL="Insufficient disk space: only %sMB available. Minimum absolute: 500MB."
     MSG_PREFLIGHT_PORT_BUSY="The following ports are already in use on this system (may cause conflicts):%s"
     MSG_PREFLIGHT_OK="Pre-flight checks completed successfully."
@@ -558,7 +558,7 @@ preflight_check() {
     if [ "$free_disk_mb" -lt 500 ]; then
         log_error "$MSG_PREFLIGHT_DISK_FAIL" "$free_disk_mb"
         exit 1
-    elif [ "$free_disk_mb" -lt 10240 ]; then
+    elif [ "$free_disk_mb" -lt 20480 ]; then
         log_warning "$MSG_PREFLIGHT_DISK_WARN" "$free_disk_mb"
     else
         log_success "$MSG_PREFLIGHT_DISK_OK" "$free_disk_mb"
@@ -1499,7 +1499,7 @@ run_structured_preflight() {
         fi
     done
 
-    if [ "${ram_mb:-0}" -lt 3200 ] || [ "${disk_gb:-0}" -lt 10 ]; then
+    if [ "${ram_mb:-0}" -lt 3200 ] || [ "${disk_gb:-0}" -lt 20 ]; then
         server_ready="warn"
     fi
 
